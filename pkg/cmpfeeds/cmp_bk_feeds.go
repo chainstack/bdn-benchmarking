@@ -6,8 +6,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	log "github.com/sirupsen/logrus"
-	"github.com/urfave/cli/v2"
 	"math"
 	"os"
 	"performance/internal/pkg/flags"
@@ -16,14 +14,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 )
 
 // BkFeedsCompareService represents a service which compares block feeds time difference
-// between ETH node and BX gateway.
+// between EVM node and BX gateway.
 type BkFeedsCompareService struct {
 	handlers chan handler
-	ethCh    chan *message
-	ethBkCh  chan *message
+	evmCh    chan *message
+	evmBkCh  chan *message
 	bxCh     chan *message
 
 	hashes chan string
@@ -48,8 +49,8 @@ func NewBkFeedsCompareService() *BkFeedsCompareService {
 	return &BkFeedsCompareService{
 		handlers:       make(chan handler),
 		bxCh:           make(chan *message),
-		ethCh:          make(chan *message),
-		ethBkCh:        make(chan *message, bufSize),
+		evmCh:          make(chan *message),
+		evmBkCh:        make(chan *message, bufSize),
 		hashes:         make(chan string, bufSize),
 		trailNewHashes: utils.NewHashSet(),
 		leadNewHashes:  utils.NewHashSet(),
@@ -91,7 +92,7 @@ func (s *BkFeedsCompareService) Run(c *cli.Context) error {
 			s.allHashesFile = csv.NewWriter(file)
 
 			if err := s.allHashesFile.Write([]string{
-				"BkHash", "BloXRoute Time", "Eth Time",
+				"BkHash", "BloXRoute Time", "evm Time",
 			}); err != nil {
 				return fmt.Errorf("cannot write CSV header of file %q: %v", fileName, err)
 			}
@@ -126,7 +127,7 @@ func (s *BkFeedsCompareService) Run(c *cli.Context) error {
 		leadTimeSec  = c.Int(flags.LeadTime.Name)
 		intervalSec  = c.Int(flags.Interval.Name)
 		trailTimeSec = c.Int(flags.BkTrailTime.Name)
-		ethURI       = c.String(flags.Eth.Name)
+		evmURI       = c.String(flags.FeedWSEndpoint.Name)
 		ctx, cancel  = context.WithCancel(context.Background())
 
 		readerGroup sync.WaitGroup
@@ -153,22 +154,22 @@ func (s *BkFeedsCompareService) Run(c *cli.Context) error {
 		bxURI,
 		c.String(flags.AuthHeader.Name),
 	)
-	go s.readFeedFromEth(
+	go s.readFeedFromEvm(
 		ctx,
 		&readerGroup,
-		s.ethCh,
-		ethURI,
+		s.evmCh,
+		evmURI,
 	)
 
 	if !s.excBkContents {
 		const totalReaders = 4
 		for i := 0; i < totalReaders; i++ {
 			readerGroup.Add(1)
-			go s.readBkContentsFromEth(
+			go s.readBkContentsFromEvm(
 				ctx,
 				&readerGroup,
-				s.ethBkCh,
-				ethURI,
+				s.evmBkCh,
+				evmURI,
 			)
 		}
 	}
@@ -240,12 +241,12 @@ func (s *BkFeedsCompareService) handleUpdates(
 			if err := update(); err != nil {
 				log.Errorf("error in update function: %v", err)
 			}
-		case data, ok := <-s.ethBkCh:
+		case data, ok := <-s.evmBkCh:
 			if !ok {
 				continue
 			}
 
-			if err := s.processBkContentsFromEth(data); err != nil {
+			if err := s.processBkContentsFromEvm(data); err != nil {
 				log.Errorf("error: %v", err)
 			}
 		default:
@@ -258,12 +259,12 @@ func (s *BkFeedsCompareService) handleUpdates(
 				if err := s.processFeedFromBX(data); err != nil {
 					log.Errorf("error: %v", err)
 				}
-			case data, ok := <-s.ethCh:
+			case data, ok := <-s.evmCh:
 				if !ok {
 					continue
 				}
 
-				if err := s.processFeedFromEth(data); err != nil {
+				if err := s.processFeedFromEvm(data); err != nil {
 					log.Errorf("error: %v", err)
 				}
 			default:
@@ -313,21 +314,21 @@ func (s *BkFeedsCompareService) processFeedFromBX(data *message) error {
 	return nil
 }
 
-func (s *BkFeedsCompareService) processFeedFromEth(data *message) error {
+func (s *BkFeedsCompareService) processFeedFromEvm(data *message) error {
 	if data.err != nil {
 		return fmt.Errorf(
-			"failed to read message from ETH feed: %v", data.err)
+			"failed to read message from EVM feed: %v", data.err)
 	}
 
 	timeReceived := time.Now()
 
-	var msg ethBkFeedResponse
+	var msg evmBkFeedResponse
 	if err := json.Unmarshal(data.bytes, &msg); err != nil {
 		return fmt.Errorf("failed to unmarshal message: %v", err)
 	}
 
 	hash := msg.Params.Result.Hash
-	log.Debugf("got message at %s (ETH node, SUB), hash: %s", timeReceived, hash)
+	log.Debugf("got message at %s (EVM node, SUB), hash: %s", timeReceived, hash)
 
 	if timeReceived.Before(s.timeToBeginComparison) {
 		s.leadNewHashes.Add(hash)
@@ -337,15 +338,15 @@ func (s *BkFeedsCompareService) processFeedFromEth(data *message) error {
 	if !s.excBkContents {
 		go func() { s.hashes <- hash }()
 	} else if entry, ok := s.seenHashes[hash]; ok {
-		if entry.ethTimeReceived.IsZero() {
-			entry.ethTimeReceived = timeReceived
+		if entry.evmTimeReceived.IsZero() {
+			entry.evmTimeReceived = timeReceived
 		}
 	} else if timeReceived.Before(s.timeToEndComparison) &&
 		!s.trailNewHashes.Contains(hash) &&
 		!s.leadNewHashes.Contains(hash) {
 
 		s.seenHashes[hash] = &hashEntry{
-			ethTimeReceived: timeReceived,
+			evmTimeReceived: timeReceived,
 			hash:            hash,
 		}
 	} else {
@@ -355,7 +356,7 @@ func (s *BkFeedsCompareService) processFeedFromEth(data *message) error {
 	return nil
 }
 
-func (s *BkFeedsCompareService) processBkContentsFromEth(data *message) error {
+func (s *BkFeedsCompareService) processBkContentsFromEvm(data *message) error {
 	hash := data.hash
 
 	if data.err != nil {
@@ -365,27 +366,27 @@ func (s *BkFeedsCompareService) processBkContentsFromEth(data *message) error {
 
 	timeReceived := time.Now()
 
-	var msg ethBkContentsResponse
+	var msg evmBkContentsResponse
 	if err := json.Unmarshal(data.bytes, &msg); err != nil {
 		return fmt.Errorf("failed to unmarshal message: %v", err)
 	}
 
-	log.Debugf("got message at %s (ETH node, BKC), hash: %s", timeReceived, hash)
+	log.Debugf("got message at %s (EVM node, BKC), hash: %s", timeReceived, hash)
 
 	if msg.Result == nil {
 		return nil
 	}
 
 	if entry, ok := s.seenHashes[hash]; ok {
-		if entry.ethTimeReceived.IsZero() {
-			entry.ethTimeReceived = timeReceived
+		if entry.evmTimeReceived.IsZero() {
+			entry.evmTimeReceived = timeReceived
 		}
 	} else if timeReceived.Before(s.timeToEndComparison) &&
 		!s.trailNewHashes.Contains(hash) &&
 		!s.leadNewHashes.Contains(hash) {
 
 		s.seenHashes[hash] = &hashEntry{
-			ethTimeReceived: timeReceived,
+			evmTimeReceived: timeReceived,
 			hash:            hash,
 		}
 	} else {
@@ -399,18 +400,18 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 	const timestampFormat = "2006-01-02T15:04:05.000"
 	var (
 		bkSeenByBothFeedsGatewayFirst      = 0
-		bkSeenByBothFeedsEthNodeFirst      = 0
+		bkSeenByBothFeedsEvmNodeFirst      = 0
 		bkReceivedByGatewayFirstTotalDelta = 0.0
-		bkReceivedByEthNodeFirstTotalDelta = 0.0
+		bkReceivedByEvmNodeFirstTotalDelta = 0.0
 		newBkFromGatewayFeedFirst          = 0
-		newBkFromEthNodeFeedFirst          = 0
+		newBkFromEvmNodeFeedFirst          = 0
 		totalBkFromGateway                 = 0
-		totalBkFromEthNode                 = 0
+		totalBkFromEvmNode                 = 0
 	)
 
 	for bkHash, entry := range s.seenHashes {
 		if entry.bxrTimeReceived.IsZero() {
-			ethNodeTimeReceived := entry.ethTimeReceived
+			evmNodeTimeReceived := entry.evmTimeReceived
 
 			if s.missingHashesFile != nil {
 				line := fmt.Sprintf("%s\n", bkHash)
@@ -419,16 +420,16 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 				}
 			}
 			if s.allHashesFile != nil {
-				record := []string{bkHash, "0", ethNodeTimeReceived.Format(timestampFormat)}
+				record := []string{bkHash, "0", evmNodeTimeReceived.Format(timestampFormat)}
 				if err := s.allHashesFile.Write(record); err != nil {
 					log.Errorf("cannot add bkHash %q to all hashes file: %v", bkHash, err)
 				}
 			}
-			newBkFromEthNodeFeedFirst++
-			totalBkFromEthNode++
+			newBkFromEvmNodeFeedFirst++
+			totalBkFromEvmNode++
 			continue
 		}
-		if entry.ethTimeReceived.IsZero() {
+		if entry.evmTimeReceived.IsZero() {
 			gatewayTimeReceived := entry.bxrTimeReceived
 
 			if s.allHashesFile != nil {
@@ -443,19 +444,19 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 		}
 
 		var (
-			ethNodeTimeReceived = entry.ethTimeReceived
+			evmNodeTimeReceived = entry.evmTimeReceived
 			gatewayTimeReceived = entry.bxrTimeReceived
-			timeReceivedDiff    = gatewayTimeReceived.Sub(ethNodeTimeReceived)
+			timeReceivedDiff    = gatewayTimeReceived.Sub(evmNodeTimeReceived)
 		)
 
 		totalBkFromGateway++
-		totalBkFromEthNode++
+		totalBkFromEvmNode++
 
 		if s.allHashesFile != nil {
 			record := []string{
 				bkHash,
 				gatewayTimeReceived.Format(timestampFormat),
-				ethNodeTimeReceived.Format(timestampFormat),
+				evmNodeTimeReceived.Format(timestampFormat),
 			}
 			if err := s.allHashesFile.Write(record); err != nil {
 				log.Errorf("cannot add bkHash %q to all hashes file: %v", bkHash, err)
@@ -467,22 +468,22 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 		}
 
 		switch {
-		case gatewayTimeReceived.Before(ethNodeTimeReceived):
+		case gatewayTimeReceived.Before(evmNodeTimeReceived):
 			newBkFromGatewayFeedFirst++
 			bkSeenByBothFeedsGatewayFirst++
 			bkReceivedByGatewayFirstTotalDelta += -timeReceivedDiff.Seconds()
-		case ethNodeTimeReceived.Before(gatewayTimeReceived):
-			newBkFromEthNodeFeedFirst++
-			bkSeenByBothFeedsEthNodeFirst++
-			bkReceivedByEthNodeFirstTotalDelta += timeReceivedDiff.Seconds()
+		case evmNodeTimeReceived.Before(gatewayTimeReceived):
+			newBkFromEvmNodeFeedFirst++
+			bkSeenByBothFeedsEvmNodeFirst++
+			bkReceivedByEvmNodeFirstTotalDelta += timeReceivedDiff.Seconds()
 		}
 	}
 
 	var (
 		newBkSeenByBothFeeds = bkSeenByBothFeedsGatewayFirst +
-			bkSeenByBothFeedsEthNodeFirst
+			bkSeenByBothFeedsEvmNodeFirst
 		bkReceivedByGatewayFirstAvgDelta = 0
-		bkReceivedByEthNodeFirstAvgDelta = 0
+		bkReceivedByEvmNodeFirstAvgDelta = 0
 		bkPercentageSeenByGatewayFirst   = 0
 	)
 
@@ -491,9 +492,9 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 			bkReceivedByGatewayFirstTotalDelta / float64(bkSeenByBothFeedsGatewayFirst) * 1000))
 	}
 
-	if bkSeenByBothFeedsEthNodeFirst != 0 {
-		bkReceivedByEthNodeFirstAvgDelta = int(math.Round(
-			bkReceivedByEthNodeFirstTotalDelta / float64(bkSeenByBothFeedsEthNodeFirst) * 1000))
+	if bkSeenByBothFeedsEvmNodeFirst != 0 {
+		bkReceivedByEvmNodeFirstAvgDelta = int(math.Round(
+			bkReceivedByEvmNodeFirstTotalDelta / float64(bkSeenByBothFeedsEvmNodeFirst) * 1000))
 	}
 
 	if newBkSeenByBothFeeds != 0 {
@@ -506,25 +507,25 @@ func (s *BkFeedsCompareService) stats(ignoreDelta int) string {
 		"Number of new blocks received first from node: %d\n"+
 		"Total number of blocks seen: %d\n"+
 		"Total blocks from gateway: %d\n"+
-		"Total blocks from eth node: %d\n"+
+		"Total blocks from evm node: %d\n"+
 		"\nAnalysis of Blocks received on both feeds:\n"+
 		"Number of blocks: %d\n"+
 		"Number of blocks received from Gateway first: %d\n"+
-		"Number of blocks received from Ethereum node first: %d\n"+
+		"Number of blocks received from Evm node first: %d\n"+
 		"Percentage of blocks seen first from gateway: %d\n"+
 		"Average time difference for blocks received first from gateway (ms): %d\n"+
-		"Average time difference for blocks received first from Ethereum node (ms): %d\n",
+		"Average time difference for blocks received first from Evm node (ms): %d\n",
 		newBkFromGatewayFeedFirst,
-		newBkFromEthNodeFeedFirst,
-		newBkFromGatewayFeedFirst+newBkFromEthNodeFeedFirst,
+		newBkFromEvmNodeFeedFirst,
+		newBkFromGatewayFeedFirst+newBkFromEvmNodeFeedFirst,
 		totalBkFromGateway,
-		totalBkFromEthNode,
+		totalBkFromEvmNode,
 		newBkSeenByBothFeeds,
 		bkSeenByBothFeedsGatewayFirst,
-		bkSeenByBothFeedsEthNodeFirst,
+		bkSeenByBothFeedsEvmNodeFirst,
 		bkPercentageSeenByGatewayFirst,
 		bkReceivedByGatewayFirstAvgDelta,
-		bkReceivedByEthNodeFirstAvgDelta,
+		bkReceivedByEvmNodeFirstAvgDelta,
 	)
 }
 
@@ -581,7 +582,7 @@ func (s *BkFeedsCompareService) readFeedFromBX(
 	}
 }
 
-func (s *BkFeedsCompareService) readFeedFromEth(
+func (s *BkFeedsCompareService) readFeedFromEvm(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	out chan<- *message,
@@ -603,15 +604,15 @@ func (s *BkFeedsCompareService) readFeedFromEth(
 		}
 	}()
 
-	sub, err := conn.SubscribeBkFeedEth(1)
+	sub, err := conn.SubscribeBkFeedEvm(1)
 	if err != nil {
-		log.Errorf("cannot subscribe to ETH feed: %v", err)
+		log.Errorf("cannot subscribe to EVM feed: %v", err)
 		return
 	}
 
 	defer func() {
 		if err := sub.Unsubscribe(); err != nil {
-			log.Errorf("cannot unsubscribe from ETH feed: %v", err)
+			log.Errorf("cannot unsubscribe from EVM feed: %v", err)
 		}
 	}()
 
@@ -632,7 +633,7 @@ func (s *BkFeedsCompareService) readFeedFromEth(
 	}
 }
 
-func (s *BkFeedsCompareService) readBkContentsFromEth(
+func (s *BkFeedsCompareService) readBkContentsFromEvm(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	out chan<- *message,
@@ -699,8 +700,8 @@ func (s *BkFeedsCompareService) drainChannels() {
 			<-s.hashes
 		}
 
-		for len(s.ethBkCh) > 0 {
-			<-s.ethBkCh
+		for len(s.evmBkCh) > 0 {
+			<-s.evmBkCh
 		}
 
 		done <- struct{}{}

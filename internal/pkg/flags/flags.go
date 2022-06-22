@@ -2,16 +2,16 @@ package flags
 
 import "github.com/urfave/cli/v2"
 
-// CLI flags for ethcompare
+// CLI flags for evmcompare
 var (
 	Gateway = &cli.StringFlag{
 		Name:  "gateway",
 		Usage: "gateway websocket connection string",
 		Value: "ws://127.0.0.1:28333/ws",
 	}
-	Eth = &cli.StringFlag{
-		Name:  "eth",
-		Usage: "ethereum node websocket connection string",
+	FeedWSEndpoint = &cli.StringFlag{
+		Name:  "feed-ws-endpoint",
+		Usage: "evm node websocket connection string",
 		Value: "ws://127.0.0.1:8546",
 	}
 	TxFeedName = &cli.StringFlag{
@@ -30,7 +30,7 @@ var (
 	}
 	Addresses = &cli.StringFlag{
 		Name:  "addresses",
-		Usage: "comma separated list of Ethereum addresses",
+		Usage: "comma separated list of evm addresses",
 	}
 	ExcludeTxContents = &cli.BoolFlag{
 		Name:  "exclude-tx-contents",
@@ -117,8 +117,23 @@ var (
 	}
 	NodeWSEndpoint = &cli.StringFlag{
 		Name:     "node-ws-endpoint",
-		Usage:    "Ethereum node ws endpoint. Sample Input: ws://127.0.0.1:8546",
+		Usage:    "evm node ws endpoint. Sample Input: ws://127.0.0.1:8546",
 		Required: true,
+	}
+	SecondNodeWSEndpoint = &cli.StringFlag{
+		Name:     "second-node-ws-endpoint",
+		Usage:    "evm ws endpoint. Sample Input: ws://127.0.0.1:8546",
+		Required: false,
+	}
+	NodeEndpoint = &cli.StringFlag{
+		Name:     "node-endpoint",
+		Usage:    "evm node ws endpoint. Sample Input: http://127.0.0.1:8546",
+		Required: true,
+	}
+	SecondNodeEndpoint = &cli.StringFlag{
+		Name:     "second-node-endpoint",
+		Usage:    "evm ws endpoint. Sample Input: http://127.0.0.1:8546",
+		Required: false,
 	}
 	BXEndpoint = &cli.StringFlag{
 		Name:  "blxr-endpoint",
@@ -141,9 +156,19 @@ var (
 		Usage: "EVM chain id",
 		Value: 1,
 	}
+	NetworkName = &cli.StringFlag{
+		Name:  "network-name",
+		Usage: "One of networks name: Mainnet, BSC-Mainnet, Polygon-Mainnet",
+		Value: "Mainnet",
+	}
 	NumTxGroups = &cli.IntFlag{
 		Name:  "num-tx-groups",
 		Usage: "Number of groups of transactions to submit.",
+		Value: 1,
+	}
+	TxCount = &cli.IntFlag{
+		Name:  "tx-count",
+		Usage: "Number of transactions to submit.",
 		Value: 1,
 	}
 	GasPrice = &cli.Int64Flag{

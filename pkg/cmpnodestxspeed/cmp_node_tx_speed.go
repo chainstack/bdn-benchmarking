@@ -1,17 +1,10 @@
-package cmptxspeed
+package cmpnodestxspeed
 
 import (
 	"bytes"
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/params"
-	log "github.com/sirupsen/logrus"
-	"github.com/urfave/cli/v2"
 	"math/big"
 	"performance/internal/pkg/flags"
 	"performance/internal/pkg/utils"
@@ -19,24 +12,31 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
+	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 )
 
 // TxSpeedCompareService represents a service which compares transaction sending speed time
-// between ETH node and BX gateway.
+// between ETH-like nodes.
 type TxSpeedCompareService struct{}
 
 // Run is an entry point to the TxSpeedCompareService.
 func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 	var (
-		gasLimit         = int64(22000)
-		senderPrivateKey = c.String(flags.SenderPrivateKey.Name)
-		bxEndpoint       = c.String(flags.BXEndpoint.Name)
-		bxAuthHeader     = c.String(flags.BXAuthHeader.Name)
-		numTxGroups      = c.Int(flags.NumTxGroups.Name)
-		gasPriceWei      = c.Int64(flags.GasPrice.Name) * params.GWei
-		chainID          = c.Int(flags.ChainID.Name)
-		delay            = c.Int(flags.Delay.Name)
-		nodeEndpoint     = c.String(flags.NodeWSEndpoint.Name)
+		gasLimit          = int64(22000)
+		senderPrivateKey  = c.String(flags.SenderPrivateKey.Name)
+		numTxGroups       = c.Int(flags.NumTxGroups.Name)
+		gasPriceWei       = c.Int64(flags.GasPrice.Name) * params.GWei
+		chainID           = c.Int(flags.ChainID.Name)
+		delay             = c.Int(flags.Delay.Name)
+		nodeEndpoint      = c.String(flags.NodeWSEndpoint.Name)
+		secondNodeEnpoint = c.String(flags.SecondNodeWSEndpoint.Name)
 	)
 
 	secretKey, err := makePrivateKey(senderPrivateKey)
@@ -51,15 +51,17 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 
 	nodeConn, err := openConnection(nodeEndpoint, "")
 	if err != nil {
+		fmt.Println(nodeEndpoint)
 		return err
 	}
 	defer closeConnection(nodeConn, nodeEndpoint)
 
-	bxConn, err := openConnection(bxEndpoint, bxAuthHeader)
+	secondNodeConn, err := openConnection(secondNodeEnpoint, "")
 	if err != nil {
+		fmt.Println(secondNodeEnpoint)
 		return err
 	}
-	defer closeConnection(bxConn, bxEndpoint)
+	defer closeConnection(secondNodeConn, secondNodeEnpoint)
 
 	nonce, err := getNonce(nodeConn, address)
 	if err != nil {
@@ -73,17 +75,17 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 
 	if expense := int64(numTxGroups) * gasPriceWei * gasLimit; balance < uint64(expense) {
 		var (
-			requiredEth = float64(expense) / params.Ether
-			currentEth  = float64(balance) / params.Ether
+			requiredEvm = float64(expense) / params.Ether
+			currentEvm  = float64(balance) / params.Ether
 		)
 
 		fmt.Printf("Sender %s does not have enough balance for %d groups of transactions.\n"+
-			"Sender's balance is %f ETH,\n"+
-			"while at least %f ETH is required\n",
+			"Sender's balance is %f Coins,\n"+
+			"while at least %f Coins is required\n",
 			address,
 			numTxGroups,
-			currentEth,
-			requiredEth)
+			currentEvm,
+			requiredEvm)
 
 		return nil
 	}
@@ -105,7 +107,7 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 
 		fmt.Printf("Sending tx group %d\n", i)
 
-		// BX transaction
+		// Node 1 transaction
 		tx := types.NewTx(&types.LegacyTx{
 			To:       &addr,
 			Value:    value,
@@ -115,19 +117,19 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 			Data:     []byte("0x11111111"),
 		})
 
-		bxSignedTx, err := types.SignTx(tx, signer, secretKey)
+		evmSignedTx, err := types.SignTx(tx, signer, secretKey)
 		if err != nil {
 			return err
 		}
 
-		bxEncodedTx, err := encodeSignedTx(bxSignedTx)
+		evmEncodedTx, err := encodeSignedTx(evmSignedTx)
 		if err != nil {
 			return err
 		}
 
-		endpointToTx[bxEndpoint] = bxSignedTx.Hash().Hex()
+		endpointToTx[nodeEndpoint] = evmSignedTx.Hash().Hex()
 
-		// Node transaction
+		// Node 2 transaction
 		tx = types.NewTx(&types.LegacyTx{
 			To:       &addr,
 			Value:    value,
@@ -137,25 +139,25 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 			Data:     []byte("0x22222222"),
 		})
 
-		ethSignedTx, err := types.SignTx(tx, signer, secretKey)
+		secondevmSignedTx, err := types.SignTx(tx, signer, secretKey)
 		if err != nil {
 			return err
 		}
 
-		ethEncodedTx, err := encodeSignedTx(ethSignedTx)
+		secondevmEncodedTx, err := encodeSignedTx(secondevmSignedTx)
 		if err != nil {
 			return err
 		}
 
-		endpointToTx[nodeEndpoint] = ethSignedTx.Hash().Hex()
+		endpointToTx[secondNodeEnpoint] = secondevmSignedTx.Hash().Hex()
 
-		bxCh, ethCh := make(chan []byte), make(chan []byte)
-		go bxSendTx(bxCh, bxConn, bxEncodedTx[2:])
-		go ethSendTx(ethCh, nodeConn, ethEncodedTx)
-		bxRes, ethRes := <-bxCh, <-ethCh
+		nodeCh, sNodeCh := make(chan []byte), make(chan []byte)
+		go evmSendTx(nodeCh, nodeConn, evmEncodedTx)
+		go evmSendTx(sNodeCh, secondNodeConn, secondevmEncodedTx)
+		nodeRes, sNodeRes := <-nodeCh, <-sNodeCh
 
-		fmt.Printf("blxr response: %s", string(bxRes))
-		fmt.Printf("node response: %s", string(ethRes))
+		fmt.Printf("node response: %s", string(nodeRes))
+		fmt.Printf("second node response: %s", string(sNodeRes))
 
 		time.Sleep(5 * time.Second)
 
@@ -215,34 +217,19 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 	}
 
 	fmt.Printf("\n----------------------------------------------------------------\n"+
-		"Sent %d groups of transactions to bloXroute and other ETH endpoints,\n"+
+		"Sent %d groups of transactions to node and second node endpoints,\n"+
 		"%d of them have been confirmed:\n"+
-		"Number of confirmed transactions is %d for ETH endpoint %s\n"+
-		"Number of confirmed transactions is %d for bloXroute endpoint %s\n",
+		"Number of confirmed transactions is %d for first node endpoint %s\n"+
+		"Number of confirmed transactions is %d for second node endpoint %s\n",
 		numTxGroups,
 		len(minedTxNums),
 		endpointToTxMined[nodeEndpoint], nodeEndpoint,
-		endpointToTxMined[bxEndpoint], bxEndpoint)
+		endpointToTxMined[secondNodeEnpoint], secondNodeEnpoint)
 
 	return nil
 }
 
-func bxSendTx(out chan<- []byte, conn *ws.Connection, rawTx string) {
-	req := ws.NewRequest(1, "blxr_tx", []interface{}{
-		map[string]interface{}{
-			"transaction": rawTx,
-		},
-	})
-
-	data, err := conn.Call(req)
-	if err != nil {
-		out <- []byte(err.Error())
-	} else {
-		out <- data
-	}
-}
-
-func ethSendTx(out chan<- []byte, conn *ws.Connection, rawTx string) {
+func evmSendTx(out chan<- []byte, conn *ws.Connection, rawTx string) {
 	req := ws.NewRequest(1, "eth_sendRawTransaction", []interface{}{
 		rawTx,
 	})

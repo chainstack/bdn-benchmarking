@@ -11,19 +11,19 @@ type message struct {
 }
 
 type hashEntry struct {
-	ethTimeReceived time.Time
+	evmTimeReceived time.Time
 	bxrTimeReceived time.Time
 	hash            string
 }
 
-type ethTxFeedResponse struct {
+type evmTxFeedResponse struct {
 	Params struct {
 		Subscription string `json:"subscription"`
 		Result       string `json:"result"`
 	} `json:"params"`
 }
 
-type ethBkFeedResponse struct {
+type evmBkFeedResponse struct {
 	Params struct {
 		Subscription string `json:"subscription"`
 		Result       struct {
@@ -52,14 +52,14 @@ type bxBkFeedResponse struct {
 	} `json:"params"`
 }
 
-type ethTxContentsResponse struct {
+type evmTxContentsResponse struct {
 	Result *struct {
 		GasPrice string `json:"gasPrice"`
 		To       string `json:"to"`
 	} `json:"result"`
 }
 
-type ethBkContentsResponse struct {
+type evmBkContentsResponse struct {
 	Result *struct {
 		Hash string `json:"hash"`
 	} `json:"result"`

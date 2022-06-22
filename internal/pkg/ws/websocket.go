@@ -4,13 +4,14 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/gorilla/websocket"
 )
 
-// Request represents data which is needed to send RPC requests to ETH node or BX gateway.
+// Request represents data which is needed to send RPC requests to Evm node or BX gateway.
 type Request struct {
 	JSONRPC string        `json:"jsonrpc"`
 	ID      int           `json:"id"`
@@ -29,9 +30,9 @@ type Connection struct {
 	conn *websocket.Conn
 }
 
-// SubscribeTxFeedEth subscribes to the ETH node feed.
-func (c *Connection) SubscribeTxFeedEth(id int) (*Subscription, error) {
-	return c.subscribe(newSubTxFeedRequestEth(id), eth)
+// SubscribeTxFeedEvm subscribes to the ETH node feed.
+func (c *Connection) SubscribeTxFeedEvm(id int) (*Subscription, error) {
+	return c.subscribe(newSubTxFeedRequestEvm(id), eth)
 }
 
 // SubscribeTxFeedBX subscribes to BX gateway feed.
@@ -54,9 +55,9 @@ func (c *Connection) SubscribeTxFeedBX(
 		bx)
 }
 
-// SubscribeBkFeedEth subscribes to the Eth node feed.
-func (c *Connection) SubscribeBkFeedEth(id int) (*Subscription, error) {
-	return c.subscribe(newSubBkFeedRequestEth(id), eth)
+// SubscribeBkFeedEvm subscribes to the Evm node feed.
+func (c *Connection) SubscribeBkFeedEvm(id int) (*Subscription, error) {
+	return c.subscribe(newSubBkFeedRequestEvm(id), eth)
 }
 
 // SubscribeBkFeedBX subscribes to the BX gateway feed.
@@ -197,7 +198,7 @@ func (s *Subscription) NextMessage() ([]byte, error) {
 	return ioutil.ReadAll(r)
 }
 
-func newSubTxFeedRequestEth(id int) *Request {
+func newSubTxFeedRequestEvm(id int) *Request {
 	return NewRequest(id, "eth_subscribe", []interface{}{
 		"newPendingTransactions",
 	})
@@ -229,7 +230,7 @@ func newSubTxFeedRequestBX(
 	})
 }
 
-func newSubBkFeedRequestEth(id int) *Request {
+func newSubBkFeedRequestEvm(id int) *Request {
 	return NewRequest(id, "eth_subscribe", []interface{}{
 		"newHeads",
 	})
