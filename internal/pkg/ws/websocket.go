@@ -107,6 +107,8 @@ func (c *Connection) Call(req *Request) ([]byte, error) {
 		return nil, err
 	}
 
+	fmt.Println(string(body))
+
 	if err = c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
 		return nil, err
 	}

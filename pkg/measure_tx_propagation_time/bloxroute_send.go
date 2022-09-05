@@ -6,13 +6,14 @@ import (
 	"math/big"
 	"performance/internal/pkg/ws"
 	"performance/pkg/cmpnodestxspeedhttp"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	log "github.com/sirupsen/logrus"
 )
 
-func (s *MeasureTxPropagationTimeService) sendTxBloxroute(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, error) {
+func (s *MeasureTxPropagationTimeService) sendTxBloxroute(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, time.Time, error) {
 	var (
 		addr   = common.HexToAddress(address)
 		value  = big.NewInt(0)
@@ -22,7 +23,7 @@ func (s *MeasureTxPropagationTimeService) sendTxBloxroute(nodeEndpoint, address 
 	)
 	nonce, err := cmpnodestxspeedhttp.GetNonce(address, nodeEndpoint)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 	tx := types.NewTx(&types.LegacyTx{
 		To:       &addr,
@@ -34,7 +35,7 @@ func (s *MeasureTxPropagationTimeService) sendTxBloxroute(nodeEndpoint, address 
 	})
 	evmSignedTx, err := types.SignTx(tx, signer, secretKey)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 
 	s.txHashToFind = evmSignedTx.Hash().Hex()
@@ -42,25 +43,28 @@ func (s *MeasureTxPropagationTimeService) sendTxBloxroute(nodeEndpoint, address 
 
 	rawTx, err := cmpnodestxspeedhttp.EncodeSignedTxWithout0xPrefix(evmSignedTx)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 
 	// method: "blxr_tx" for bloXroute
 	req := ws.NewRequest(1, "blxr_tx", []interface{}{
 		map[string]interface{}{
-			"transaction":       rawTx,
-			"blockhain_network": networkName,
+			"transaction":        rawTx,
+			"blockchain_network": networkName,
 		},
 	})
 
 	wsconn, err := ws.NewConnection(apiAddress, apiKey)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
-	defer wsconn.Close()
 
-	resp, err := wsconn.Call(req)
-	log.Debug("Send transaction response: %s, error: %v\n", string(resp), err)
+	go func() {
+		resp, err := wsconn.Call(req)
+		defer wsconn.Close()
 
-	return evmSignedTx.Hash().Hex(), err
+		log.Debugf("Send transaction response: %s, error: %v\n", string(resp), err)
+	}()
+
+	return evmSignedTx.Hash().Hex(), time.Now(), err
 }

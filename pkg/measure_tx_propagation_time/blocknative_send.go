@@ -40,7 +40,7 @@ type blocknativeEvantResponse struct {
 	Hash          string             `json:"hash"`
 }
 
-func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, error) {
+func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, time.Time, error) {
 	var (
 		addr   = common.HexToAddress(address)
 		value  = big.NewInt(0)
@@ -62,7 +62,7 @@ func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, addres
 
 	nonce, err := cmpnodestxspeedhttp.GetNonce(address, nodeEndpoint)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 	tx := types.NewTx(&types.LegacyTx{
 		To:       &addr,
@@ -74,7 +74,7 @@ func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, addres
 	})
 	evmSignedTx, err := types.SignTx(tx, signer, secretKey)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 
 	s.txHashToFind = evmSignedTx.Hash().Hex()
@@ -82,34 +82,36 @@ func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, addres
 
 	rawTx, err := cmpnodestxspeedhttp.EncodeSignedTxWithout0xPrefix(evmSignedTx)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 
 	// websocket connection
 	wsconn, err := ws.NewConnection(apiAddress, apiKey)
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
-	defer wsconn.Close()
 
 	// Init request
 	initReq, err := json.Marshal(NewBlocknativeInitializationRequest(apiKey, networkName))
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 	resp, err := wsconn.CallCastomRequest(initReq)
-	log.Debug("Init response: %s, error: %v\n", string(resp), err)
+	log.Debugf("Init response: %s, error: %v\n", string(resp), err)
 
 	// Transaction request
 	txReq, err := json.Marshal(NewBlocknativeTransactionRequest(apiKey, networkName, rawTx))
 	if err != nil {
-		return "", err
+		return "", time.Now(), err
 	}
 
-	resp, err = wsconn.CallCastomRequest(txReq)
-	log.Debug("TX response: %s, error: %v\n", string(resp), err)
+	go func() {
+		defer wsconn.Close()
+		resp, err = wsconn.CallCastomRequest(txReq)
+		log.Debugf("TX response: %s, error: %v\n", string(resp), err)
+	}()
 
-	return evmSignedTx.Hash().Hex(), err
+	return evmSignedTx.Hash().Hex(), time.Now(), err
 
 }
 
