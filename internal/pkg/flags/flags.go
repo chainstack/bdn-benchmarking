@@ -181,4 +181,19 @@ var (
 		Usage: "Time (sec) to sleep between two consecutive groups.",
 		Value: 30,
 	}
+	UseBloxroute = &cli.BoolFlag{
+		Name:  "use-bloxroute",
+		Usage: "use BloXroute BDN",
+		Value: false,
+	}
+	UseBlocknative = &cli.BoolFlag{
+		Name:  "use-blocknative",
+		Usage: "use Blocknative API",
+		Value: false,
+	}
+	APIkey = &cli.StringFlag{
+		Name:  "api-key",
+		Usage: "API key for Blocknative requests",
+		Value: "",
+	}
 )

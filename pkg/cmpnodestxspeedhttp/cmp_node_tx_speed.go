@@ -3,6 +3,7 @@ package cmpnodestxspeedhttp
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -40,6 +41,7 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 		nodeEndpoint      = c.String(flags.NodeEndpoint.Name)
 		secondNodeEnpoint = c.String(flags.SecondNodeEndpoint.Name)
 	)
+	log.SetLevel(log.DebugLevel)
 
 	secretKey, err := MakePrivateKey(senderPrivateKey)
 	if err != nil {
@@ -370,4 +372,14 @@ func EncodeSignedTx(signedTx *types.Transaction) (string, error) {
 	}
 
 	return hexutil.Encode(buf.Bytes()), nil
+}
+
+func EncodeSignedTxWithout0xPrefix(signedTx *types.Transaction) (string, error) {
+	var buf bytes.Buffer
+
+	if err := signedTx.EncodeRLP(&buf); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(buf.Bytes()), nil
 }

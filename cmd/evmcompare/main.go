@@ -124,6 +124,12 @@ func main() {
 					flags.TxCount,
 					flags.GasPrice,
 					flags.Delay,
+					flags.UseBloxroute, // usage: --use-bloxroute --cloud-api-ws-uri wss://virginia.eth.blxrbdn.com/ws --blxr-auth-header NzQ4NGJmNzkt...
+					flags.BXAuthHeader,
+					flags.UseBlocknative, // usage: --use-blocknative --cloud-api-ws-uri wss://api.blocknative.com/v0 --api-key ba13ea2f-00c3-13c5.....
+					flags.APIkey,
+					flags.CloudAPIWSURI,
+					flags.NetworkName,
 				},
 				Action: measuretxpropagationtime.NewMeasureTxPropagationTimeService().Run,
 			},

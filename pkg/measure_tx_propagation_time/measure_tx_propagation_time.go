@@ -45,6 +45,8 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 		nodeEndpoint     = c.String(flags.NodeEndpoint.Name)
 	)
 
+	log.SetLevel(log.DebugLevel)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -99,7 +101,32 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 	for i := 0; i < txsCount; i++ {
 		// check before send that previous tx already not pending
 
-		hash, err := s.sendTx(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey)
+		var hash string
+		var err error
+
+		log.Debug("Values:", c.Bool(flags.UseBlocknative.Name), c.Bool(flags.UseBloxroute.Name), c.String(flags.BXAuthHeader.Name), c.String(flags.CloudAPIWSURI.Name), c.String(flags.NetworkName.Name))
+
+		switch {
+		case c.Bool(flags.UseBlocknative.Name):
+			log.Debug("Use Blocknative")
+			apiURI := c.String(flags.CloudAPIWSURI.Name)
+			apiKey := c.String(flags.APIkey.Name)
+			network := c.String(flags.NetworkName.Name)
+
+			hash, err = s.sendTxBlocknative(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, apiKey, network)
+		case c.Bool(flags.UseBloxroute.Name):
+			apiURI := c.String(flags.CloudAPIWSURI.Name)
+			authHeader := c.String(flags.BXAuthHeader.Name)
+			log.Debug(flags.BXAuthHeader.Name, "=", flags.BXAuthHeader.Name)
+			network := "Polygon-Mainnet"
+
+			log.Debug("Use Bloxroute")
+			hash, err = s.sendTxBloxroute(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, authHeader, network)
+		default:
+			log.Debug("Use Node endpoint")
+			hash, err = s.sendTx(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey)
+		}
+
 		if err != nil {
 			zap.L().Error("Error while sendind tx", zap.Error(err))
 			return err

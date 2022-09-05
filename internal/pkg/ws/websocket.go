@@ -116,6 +116,19 @@ func (c *Connection) Call(req *Request) ([]byte, error) {
 	return data, err
 }
 
+// CallCastomRequest method to make an RPC call with castom body.
+func (c *Connection) CallCastomRequest(body []byte) ([]byte, error) {
+	var err error
+
+	if err = c.conn.WriteMessage(websocket.TextMessage, body); err != nil {
+		return nil, err
+	}
+
+	_, data, err := c.conn.ReadMessage()
+
+	return data, err
+}
+
 // Close closes a connection.
 func (c *Connection) Close() error {
 	if err := c.conn.WriteMessage(
