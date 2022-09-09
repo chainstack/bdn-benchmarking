@@ -41,7 +41,7 @@ func (s *TxSpeedCompareService) Run(c *cli.Context) error {
 		nodeEndpoint      = c.String(flags.NodeEndpoint.Name)
 		secondNodeEnpoint = c.String(flags.SecondNodeEndpoint.Name)
 	)
-	log.SetLevel(log.DebugLevel)
+	//log.SetLevel(log.DebugLevel)
 
 	secretKey, err := MakePrivateKey(senderPrivateKey)
 	if err != nil {
@@ -257,7 +257,7 @@ func DoRequest(address string, body []byte) ([]byte, error) {
 	defer resp.Body.Close()
 
 	resBody, err := ioutil.ReadAll(resp.Body)
-	log.Debug("response time ", time.Since(t), "body ", string(body))
+	log.Debug("response time: ", time.Since(t), " body: ", string(body))
 
 	return resBody, err
 }

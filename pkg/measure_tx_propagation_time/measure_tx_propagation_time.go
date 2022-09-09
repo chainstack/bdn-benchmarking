@@ -24,14 +24,19 @@ import (
 type MeasureTxPropagationTimeService struct {
 	txHashToFind string
 
-	propagatedTxs map[string]time.Duration
+	propagatedTxs map[string]PropagationTimes
+}
+
+type PropagationTimes struct {
+	TimeDurSinceRequest  time.Duration
+	TimeDurSinceResponse time.Duration
 }
 
 // NewMeasureTxPropagationTimeService creates and initializes MeasureTxPropagationTimeService instance.
 func NewMeasureTxPropagationTimeService() *MeasureTxPropagationTimeService {
 	return &MeasureTxPropagationTimeService{
 		txHashToFind:  "foo",
-		propagatedTxs: make(map[string]time.Duration),
+		propagatedTxs: make(map[string]PropagationTimes),
 	}
 }
 
@@ -45,7 +50,7 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 		nodeEndpoint     = c.String(flags.NodeEndpoint.Name)
 	)
 
-	log.SetLevel(log.DebugLevel)
+	//log.SetLevel(log.DebugLevel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -96,14 +101,16 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 
 	foundTxHashChan := s.findTxHash(ctx, txFeedChan)
 
-	averagePropagationTime := time.Duration(0)
+	averagePropagationTimeReq := time.Duration(0)
+	averagePropagationTimeResp := time.Duration(0)
+
 	fmt.Printf("Starting sending and waiting for tx, tx count in queue %d\n\n", txsCount)
 	for i := 0; i < txsCount; i++ {
 		// check before send that previous tx already not pending
 
 		var hash string
 		var err error
-		var t time.Time
+		var tReqStart, tReqEnd time.Time
 
 		log.Debug("Values:", c.Bool(flags.UseBlocknative.Name), " ", c.Bool(flags.UseBloxroute.Name), " ", c.String(flags.BXAuthHeader.Name), " ", c.String(flags.CloudAPIWSURI.Name), " ", c.String(flags.NetworkName.Name))
 
@@ -114,18 +121,17 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 			apiKey := c.String(flags.APIkey.Name)
 			network := c.String(flags.NetworkName.Name)
 
-			hash, t, err = s.sendTxBlocknative(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, apiKey, network)
+			hash, tReqStart, tReqEnd, err = s.sendTxBlocknative(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, apiKey, network)
 		case c.Bool(flags.UseBloxroute.Name):
 			apiURI := c.String(flags.CloudAPIWSURI.Name)
 			authHeader := c.String(flags.BXAuthHeader.Name)
-			log.Debug(flags.BXAuthHeader.Name, "=", flags.BXAuthHeader.Name)
 			network := c.String(flags.NetworkName.Name)
 
 			log.Debug("Use Bloxroute")
-			hash, t, err = s.sendTxBloxroute(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, authHeader, network)
+			hash, tReqStart, tReqEnd, err = s.sendTxBloxroute(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey, apiURI, authHeader, network)
 		default:
 			log.Debug("Use Node endpoint")
-			hash, t, err = s.sendTx(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey)
+			hash, tReqStart, tReqEnd, err = s.sendTx(nodeEndpoint, address, gasLimit, gasPriceWei, int64(chainID), secretKey)
 		}
 
 		if err != nil {
@@ -137,10 +143,13 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 			zap.L().Error("Error while receiving message from tx feed", zap.Error(message.err))
 			return err
 		}
-		propagationTime := time.Since(t)
-		s.propagatedTxs[hash] = propagationTime
-		averagePropagationTime = averagePropagationTime + (propagationTime / time.Duration(txsCount))
-		fmt.Printf("\nTx with hash %s propagated in %s\nSleeping for %s\n\n", hash, propagationTime, c.Duration(flags.Delay.Name))
+		propagationTimeSinceRequest := time.Since(tReqStart)
+		propagationTimeSinceResponse := time.Since(tReqEnd)
+
+		s.propagatedTxs[hash] = PropagationTimes{TimeDurSinceRequest: propagationTimeSinceRequest, TimeDurSinceResponse: propagationTimeSinceResponse}
+		averagePropagationTimeReq = averagePropagationTimeReq + (propagationTimeSinceRequest / time.Duration(txsCount))
+		averagePropagationTimeResp = averagePropagationTimeResp + (propagationTimeSinceResponse / time.Duration(txsCount))
+		fmt.Printf("\nTx with hash %s propagated in %s [%s]\nSleeping for %s\n\n", hash, propagationTimeSinceRequest, propagationTimeSinceResponse, c.Duration(flags.Delay.Name))
 		for {
 			if confirmed, err := cmpnodestxspeedhttp.IsConfirmed(s.txHashToFind, nodeEndpoint); !confirmed || err != nil {
 				fmt.Printf("Waiting for the tx '%s' to be confirmed, sleeping for 5s.\n", s.txHashToFind)
@@ -155,7 +164,7 @@ func (s *MeasureTxPropagationTimeService) Run(c *cli.Context) error {
 	for hash, duration := range s.propagatedTxs {
 		fmt.Printf("%s propagated in %s\n", hash, duration)
 	}
-	fmt.Printf("\nAverage propagation time is %s\n", averagePropagationTime)
+	fmt.Printf("\nAverage propagation time is %s [%s]\n", averagePropagationTimeReq, averagePropagationTimeResp)
 
 	return nil
 }
@@ -247,7 +256,7 @@ func (s *MeasureTxPropagationTimeService) readNewTxsFeed(
 	return out, nil
 }
 
-func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey) (string, time.Time, error) {
+func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey) (string, time.Time, time.Time, error) {
 	var (
 		addr   = common.HexToAddress(address)
 		value  = big.NewInt(0)
@@ -257,7 +266,7 @@ func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, g
 	)
 	nonce, err := cmpnodestxspeedhttp.GetNonce(address, nodeEndpoint)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 	tx := types.NewTx(&types.LegacyTx{
 		To:       &addr,
@@ -269,7 +278,7 @@ func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, g
 	})
 	evmSignedTx, err := types.SignTx(tx, signer, secretKey)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 
 	s.txHashToFind = evmSignedTx.Hash().Hex()
@@ -277,7 +286,7 @@ func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, g
 
 	evmEncodedTx, err := cmpnodestxspeedhttp.EncodeSignedTx(evmSignedTx)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 
 	req := ws.NewRequest(1, "eth_sendRawTransaction", []interface{}{
@@ -286,13 +295,14 @@ func (s *MeasureTxPropagationTimeService) sendTx(nodeEndpoint, address string, g
 
 	reqBody, err := json.Marshal(req)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 
-	go func() {
-		data, err := cmpnodestxspeedhttp.DoRequest(nodeEndpoint, reqBody)
-		log.Debugf("Send transaction response: %s, error: %v\n", string(data), err)
-	}()
+	timeStartTXreq := time.Now()
+	resp, err := cmpnodestxspeedhttp.DoRequest(nodeEndpoint, reqBody)
+	timeEndTxReq := time.Now()
 
-	return evmSignedTx.Hash().Hex(), time.Now(), err
+	log.Debugf("TX response: %v, error: %v, request time:%s\n", resp, err, timeEndTxReq.Sub(timeStartTXreq))
+
+	return evmSignedTx.Hash().Hex(), timeStartTXreq, timeEndTxReq, err
 }

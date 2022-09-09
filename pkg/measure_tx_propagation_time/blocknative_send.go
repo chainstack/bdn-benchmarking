@@ -2,16 +2,18 @@ package measuretxpropagationtime
 
 import (
 	"crypto/ecdsa"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"performance/internal/pkg/ws"
+	"net/http"
 	"performance/pkg/cmpnodestxspeedhttp"
 	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -28,8 +30,8 @@ type blocknativeRequest struct {
 	SignedTransaction string `json:"signedTransaction,omitempty"`
 }
 
-type blocknativeEvantResponse struct {
-	Version       string             `json:"version"`
+type blocknativeEventResponse struct {
+	Version       int64              `json:"version"`
 	ServerVersion string             `json:"serverVersion"`
 	TimeStamp     time.Time          `json:"timeStamp"`
 	ConnectionId  string             `json:"connectionId"`
@@ -37,10 +39,10 @@ type blocknativeEvantResponse struct {
 	Raw           string             `json:"raw"`
 	Event         blocknativeRequest `json:"event"`
 	Reason        string             `json:"reason"`
-	Hash          string             `json:"hash"`
+	Hash          string             `json:"hash,omitempty"`
 }
 
-func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, time.Time, error) {
+func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, address string, gasLimit, gasPriceWei, chainID int64, secretKey *ecdsa.PrivateKey, apiAddress, apiKey, networkName string) (string, time.Time, time.Time, error) {
 	var (
 		addr   = common.HexToAddress(address)
 		value  = big.NewInt(0)
@@ -62,7 +64,7 @@ func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, addres
 
 	nonce, err := cmpnodestxspeedhttp.GetNonce(address, nodeEndpoint)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 	tx := types.NewTx(&types.LegacyTx{
 		To:       &addr,
@@ -74,44 +76,57 @@ func (s *MeasureTxPropagationTimeService) sendTxBlocknative(nodeEndpoint, addres
 	})
 	evmSignedTx, err := types.SignTx(tx, signer, secretKey)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 
 	s.txHashToFind = evmSignedTx.Hash().Hex()
 	fmt.Printf("hash to find %s\n", evmSignedTx.Hash().Hex())
 
-	rawTx, err := cmpnodestxspeedhttp.EncodeSignedTxWithout0xPrefix(evmSignedTx)
+	rawTx, err := cmpnodestxspeedhttp.EncodeSignedTx(evmSignedTx)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
 
 	// websocket connection
-	wsconn, err := ws.NewConnection(apiAddress, apiKey)
-	if err != nil {
-		return "", time.Now(), err
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true,
 	}
+	dialer := websocket.DefaultDialer
+	dialer.TLSClientConfig = tlsConfig
+	wsconn, _, err := dialer.Dial(apiAddress, http.Header{"Authorization": []string{apiKey}})
+	if err != nil {
+		log.Debugf("Dial error: %s\n", err.Error())
+		return "", time.Now(), time.Now(), err
+	}
+	defer wsconn.Close()
 
 	// Init request
-	initReq, err := json.Marshal(NewBlocknativeInitializationRequest(apiKey, networkName))
-	if err != nil {
-		return "", time.Now(), err
-	}
-	resp, err := wsconn.CallCastomRequest(initReq)
-	log.Debugf("Init response: %s, error: %v\n", string(resp), err)
+	initReq := NewBlocknativeInitializationRequest(apiKey, networkName)
+
+	resp, status, err := BlocknativeSendEvent(wsconn, *initReq, initReq.EventCode)
+
+	log.Debugf("Resp: %v, Status: %s Error: %s\n", resp, status, err)
 
 	// Transaction request
-	txReq, err := json.Marshal(NewBlocknativeTransactionRequest(apiKey, networkName, rawTx))
+	txReq := NewBlocknativeTransactionRequest(apiKey, networkName, rawTx)
 	if err != nil {
-		return "", time.Now(), err
+		return "", time.Now(), time.Now(), err
 	}
+	txReqJson, err := json.Marshal(txReq)
+	if err != nil {
+		log.Debugf("Can't marshal json: %v\n", err)
+	}
+	log.Debugf("Send TX request: %s\n", string(txReqJson))
 
-	go func() {
-		defer wsconn.Close()
-		resp, err = wsconn.CallCastomRequest(txReq)
-		log.Debugf("TX response: %s, error: %v\n", string(resp), err)
-	}()
+	timeStartTXreq := time.Now()
 
-	return evmSignedTx.Hash().Hex(), time.Now(), err
+	resp, status, err = BlocknativeSendEvent(wsconn, *txReq, "tdnSubmitResponse")
+
+	timeEndTxReq := time.Now()
+
+	log.Debugf("TX response: %v, Status: %s, error: %v, request time:%s\n", resp, status, err, timeEndTxReq.Sub(timeStartTXreq))
+
+	return evmSignedTx.Hash().Hex(), timeStartTXreq, timeEndTxReq, err
 
 }
 
@@ -142,4 +157,41 @@ func NewBlocknativeTransactionRequest(apiKey, network, signedTransaction string)
 		EventCode:         "txSubmit",
 		SignedTransaction: signedTransaction,
 	}
+}
+
+func BlocknativeSendEvent(conn *websocket.Conn, event blocknativeRequest, expectResponseEventCode string) (blocknativeEventResponse, string, error) {
+	var resp blocknativeEventResponse
+	reqB, err := json.Marshal(event)
+	if err != nil {
+		return resp, "", err
+	}
+	log.Debugf("Request: %s\n", string(reqB))
+
+	err = conn.WriteMessage(websocket.TextMessage, reqB)
+	if err != nil {
+		return resp, "", err
+	}
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+		_, respB, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		log.Debugf("Response: %s\n", string(respB))
+		err = json.Unmarshal(respB, &resp)
+		if err != nil {
+			log.Debugf("This is not event response %s\n", err.Error())
+			continue
+		}
+
+		if resp.Event.EventCode == expectResponseEventCode {
+			log.Debugf("Event response recieved\n")
+			break
+		} else {
+			log.Debug("Response code wrong: ", resp.Event.CategoryCode, event.CategoryCode, resp.Event.EventCode, event.EventCode)
+		}
+	}
+	return resp, resp.Status, nil
+
 }
