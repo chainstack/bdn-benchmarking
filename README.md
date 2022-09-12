@@ -152,11 +152,17 @@ go run cmd/evmcompare/main.go httpnodetxspeed --node-endpoint https://nd-612-026
 ### Measure tx propagation time
 This benchmark is invoked by `measuretxpropagationtime` command which has the following options:
 ```
-   --node-endpoint value    Evm node HTTP endpoint. Sample Input: http://127.0.0.1:8546
-   --feed-ws-endpoint value   Evm node ws endpoint. Sample Input: ws://127.0.0.1:8546
+   --node-endpoint value       Evm node HTTP endpoint. Sample Input: http://127.0.0.1:8546
+   --feed-ws-endpoint value    Evm node ws endpoint. May have multiple values. Sample Input: ws://127.0.0.1:8546
    --sender-private-key value  Sender's private key, which starts with 0x.
    --chain-id value            EVM chain id (default: 1)
-   --tx-count value       Number of transactions to submit. (default: 1)
+   --use-bloxroute             Use BloXroute API (default: false)
+   --blxr-auth-header value    BloXroute authorization header
+   --use-blocknative           Use Blocknative API (default: false)
+   --api-key value             Blocknative api key
+   --cloud-api-ws-uri value    Specify websocket connection string for cloud API (default: "wss://api.blxrbdn.com/ws")         
+   --network-name              One of networks name for API request: Mainnet, BSC-Mainnet, Polygon-Mainnet (for blocknative: main, ropsten, rinkeby, goerli, kovan, xdai, bsc-main, matic-main, fantom-main)
+   --tx-count value            Number of transactions to submit. (default: 1)
    --gas-price value           Transaction gas price in Gwei. (default: 0)
    --delay value               Time (sec) to sleep between sending tx. (default: 0)
    --help, -h                  show help (default: false)
@@ -170,7 +176,10 @@ Here is an example of using `measuretxpropagationtime` command:
 ```shell
 go run cmd/evmcompare/main.go measuretxpropagationtime --node-endpoint https://nd-143-578-236.p2pify.com/1388f61befcd2f46869e9f6a10d57547 --feed-ws-endpoint wss://ws-nd-816-696-544.p2pify.com/1388f61befcd2f46869e9f6a10d57547 --chain-id 137 --sender-private-key <YOUR PRIVATE KEY> --gas-price 300 --tx-count 10
 ```
-
+Example with cloud API:
+```shell
+go run cmd/evmcompare/main.go measuretxpropagationtime --node-endpoint https://rinkeby.infura.io/v3/fb874e79819546aca219504c6ce57cd2 --feed-ws-endpoint wss://ws-nd-377-408-995.p2pify.com/e00831959973c938f6b5745750a07c63 --feed-ws-endpoint wss://rinkeby.infura.io/ws/v3/fb874e79819546aca219504c6ce57cd2 --chain-id 4 --sender-private-key <YOUR PRIVATE KEY> --gas-price 60 --use-blocknative --cloud-api-ws-uri wss://api.blocknative.com/v0 --api-key <YOUR API KEY> --network-name rinkeby --tx-count 2
+```
 
 ## Installation
 This package requires only Go to be installed in the system.

@@ -127,12 +127,18 @@ func (s *BkFeedsCompareService) Run(c *cli.Context) error {
 		leadTimeSec  = c.Int(flags.LeadTime.Name)
 		intervalSec  = c.Int(flags.Interval.Name)
 		trailTimeSec = c.Int(flags.BkTrailTime.Name)
-		evmURI       = c.String(flags.FeedWSEndpoint.Name)
+		evmURIs      = c.StringSlice(flags.FeedWSEndpoint.Name)
 		ctx, cancel  = context.WithCancel(context.Background())
 
 		readerGroup sync.WaitGroup
 		handleGroup sync.WaitGroup
 	)
+
+	// Used only first value
+	evmURI := ""
+	if len(evmURIs) > 0 {
+		evmURI = evmURIs[0]
+	}
 
 	s.timeToBeginComparison = time.Now().Add(time.Second * time.Duration(leadTimeSec))
 	s.timeToEndComparison = s.timeToBeginComparison.Add(time.Second * time.Duration(intervalSec))

@@ -1,6 +1,8 @@
 package flags
 
-import "github.com/urfave/cli/v2"
+import (
+	"github.com/urfave/cli/v2"
+)
 
 // CLI flags for evmcompare
 var (
@@ -9,11 +11,12 @@ var (
 		Usage: "gateway websocket connection string",
 		Value: "ws://127.0.0.1:28333/ws",
 	}
-	FeedWSEndpoint = &cli.StringFlag{
+
+	FeedWSEndpoint = &cli.StringSliceFlag{
 		Name:  "feed-ws-endpoint",
 		Usage: "evm node websocket connection string",
-		Value: "ws://127.0.0.1:8546",
 	}
+
 	TxFeedName = &cli.StringFlag{
 		Name:  "feed-name",
 		Usage: "specify feed name, possible values: 'newTxs', 'pendingTxs', 'transactionStatus'",
